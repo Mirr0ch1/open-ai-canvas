@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
@@ -106,12 +105,10 @@ type ResolveBillingBatchResult struct {
 }
 
 type tokenBillingEstimate struct {
-	InputTokens       int64
-	OutputTokens      int64
-	CharacterCount    int64
-	CharacterCountErr error
-	Video             *VideoTokenEstimate
-	Err               error
+	InputTokens  int64
+	OutputTokens int64
+	Video        *VideoTokenEstimate
+	Err          error
 }
 
 func (s *Service) Wallet(user *model.User, entryType string, page int, limit int) (*WalletSummary, error) {
@@ -507,18 +504,6 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 			return nil, BadAuthRequest("当前模型按时长计费，但请求未提供有效时长")
 		}
 		amount, err = creditAmount(logicalModel.UnitPriceMicrocredits, quantity, 10_000)
-	case "per_character":
-		if capability != "audio" {
-			return nil, BadAuthRequest("按字符计费仅适用于音频生成")
-		}
-		if tokenEstimate.CharacterCountErr != nil {
-			return nil, tokenEstimate.CharacterCountErr
-		}
-		if tokenEstimate.CharacterCount <= 0 {
-			return nil, BadAuthRequest("音频提示词不能为空，无法按字符计费")
-		}
-		quantity = tokenEstimate.CharacterCount
-		amount, err = characterBillingAmount(logicalModel.UnitPriceMicrocredits, quantity, 10_000)
 	case "token":
 		if channelModel.Capability != capability || !supportsTokenBilling(capability, channelModel.Protocol) {
 			return nil, BadAuthRequest("当前供应线路不支持前台模型的 Token 计费方式")
@@ -577,7 +562,7 @@ func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, m
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
 	}
-	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), quantity, estimateProxyTokens(requestBody, capability))
+	order, err := s.newBillingOrder(userID, "", "proxy:"+idempotencyKey, channelID, modelKey, capability, firstNonEmpty(strings.TrimSpace(scene), "system_proxy"), quantity, estimateProxyTokens(requestBody))
 	if err != nil {
 		return nil, err
 	}
@@ -618,17 +603,6 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 			return nil, BadAuthRequest("生成时长无效，无法按秒计费")
 		}
 		quantity = requestedQuantity
-	case "per_character":
-		if item.Capability != "audio" || capability != "audio" {
-			return nil, BadAuthRequest("按字符计费仅适用于音频生成")
-		}
-		if tokenEstimate.CharacterCountErr != nil {
-			return nil, tokenEstimate.CharacterCountErr
-		}
-		if tokenEstimate.CharacterCount <= 0 {
-			return nil, BadAuthRequest("音频提示词不能为空，无法按字符计费")
-		}
-		quantity = tokenEstimate.CharacterCount
 	case "token":
 		if tokenEstimate.Err != nil {
 			return nil, tokenEstimate.Err
@@ -659,8 +633,6 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 	}
 	if tier.BillingMode == "token" {
 		amount, err = tokenEstimateAmount(&model.ChannelModel{InputTokenPriceMicrocredits: tier.InputTokenPriceMicrocredits, OutputTokenPriceMicrocredits: tier.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: tier.CachedTokenPriceMicrocredits}, tokenEstimate, multiplierBPS)
-	} else if tier.BillingMode == "per_character" {
-		amount, err = characterBillingAmount(tier.UnitPriceMicrocredits, quantity, multiplierBPS)
 	} else {
 		amount, err = creditAmount(tier.UnitPriceMicrocredits, quantity, multiplierBPS)
 	}
@@ -711,30 +683,15 @@ func estimateTaskTokens(input map[string]any) tokenBillingEstimate {
 }
 
 func estimateTaskBillingTokens(input map[string]any, capability string) tokenBillingEstimate {
-	if capability == "audio" {
-		prompt, _ := input["prompt"].(string)
-		prompt = strings.TrimSpace(prompt)
-		return tokenBillingEstimate{CharacterCount: int64(utf8.RuneCountInString(prompt))}
-	}
 	if capability == "video" {
 		return estimateArkVideoTokens(input)
 	}
 	return estimateTaskTokens(input)
 }
 
-func estimateProxyTokens(body []byte, capability string) tokenBillingEstimate {
+func estimateProxyTokens(body []byte) tokenBillingEstimate {
 	var payload map[string]any
 	_ = json.Unmarshal(body, &payload)
-	if capability == "audio" {
-		prompt := strings.TrimSpace(fmt.Sprint(payload["input"]))
-		if prompt == "<nil>" || prompt == "" {
-			prompt = strings.TrimSpace(fmt.Sprint(payload["prompt"]))
-		}
-		if prompt == "<nil>" {
-			prompt = ""
-		}
-		return tokenBillingEstimate{CharacterCount: int64(utf8.RuneCountInString(prompt))}
-	}
 	return tokenBillingEstimate{InputTokens: estimatedTokens(body), OutputTokens: maxOutputTokens(payload)}
 }
 

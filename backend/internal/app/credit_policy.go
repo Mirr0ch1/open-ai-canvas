@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -152,40 +153,16 @@ func creditAmount(unitPrice int64, quantity int64, multiplierBPS int64) (int64, 
 	if unitPrice < 0 || quantity <= 0 || multiplierBPS <= 0 {
 		return 0, errors.New("积分计费参数无效")
 	}
-	const maxInt64 = int64(^uint64(0) >> 1)
-	if unitPrice > maxInt64/quantity {
+	if unitPrice > (1<<63-1)/quantity {
 		return 0, errors.New("积分计费金额溢出")
 	}
 	base := unitPrice * quantity
-	if base > maxInt64/multiplierBPS {
+	if base > ((1<<63-1)-9_999)/multiplierBPS {
 		return 0, errors.New("积分计费金额溢出")
 	}
-	numerator := base * multiplierBPS
-	const denominator = int64(10_000)
-	if numerator > maxInt64-(denominator-1) {
-		return 0, errors.New("积分计费金额溢出")
-	}
-	amount := (numerator + denominator - 1) / denominator
+	amount := (base*multiplierBPS + 9_999) / 10_000
 	if amount < 0 {
-		return 0, errors.New("积分计费金额无效")
+		return 0, fmt.Errorf("积分计费金额无效：%d", amount)
 	}
 	return amount, nil
-}
-
-// creditAmountByUnit 按“每 unitDivisor 个数量”为一个价格单位计费。
-// 例如按字符计费时，unitDivisor 为 10,000，数量先向上折算成计费单位，
-// 再套用销售倍率，避免把“万字符”误当成微积分分母。
-func creditAmountByUnit(unitPrice int64, quantity int64, unitDivisor int64, multiplierBPS int64) (int64, error) {
-	if unitPrice < 0 || quantity <= 0 || unitDivisor <= 0 || multiplierBPS <= 0 {
-		return 0, errors.New("积分计费参数无效")
-	}
-	const maxInt64 = int64(^uint64(0) >> 1)
-	if quantity > maxInt64-(unitDivisor-1) {
-		return 0, errors.New("积分计费金额溢出")
-	}
-	units := (quantity + unitDivisor - 1) / unitDivisor
-	return creditAmount(unitPrice, units, multiplierBPS)
-}
-func characterBillingAmount(unitPrice int64, characters int64, multiplierBPS int64) (int64, error) {
-	return creditAmountByUnit(unitPrice, characters, 10_000, multiplierBPS)
 }

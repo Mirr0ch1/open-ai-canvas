@@ -29,8 +29,6 @@ export type CloudAgentConversation = {
     title: string;
     messages: CloudAgentConversationMessage[];
     run: AgentRun | null;
-    /** Composer text that has not been submitted yet. */
-    draft?: string;
     model?: string;
     permissionMode: AgentPermissionMode;
     skillIds?: string[];

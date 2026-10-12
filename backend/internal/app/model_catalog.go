@@ -279,7 +279,7 @@ func computeChannelModelPriceDisplay(cm *model.ChannelModel, priceTiers []Public
 
 // getChannelTierDisplayPrice 获取渠道价格档的展示价格
 func getChannelTierDisplayPrice(tier PublicChannelModelPriceTier) int64 {
-	if tier.BillingMode == "fixed_request" || tier.BillingMode == "per_second" || tier.BillingMode == "per_character" {
+	if tier.BillingMode == "fixed_request" || tier.BillingMode == "per_second" {
 		return tier.UnitPriceMicrocredits
 	}
 	if tier.OutputTokenPriceMicrocredits > 0 {
