@@ -91,6 +91,23 @@ jobs:
           path: ${{ runner.temp }}/go-tests.jsonl
           if-no-files-found: ignore
 
+  deploy-scripts:
+    name: Deploy script checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          for script in scripts/*.sh; do
+            echo "::group::$script"
+            bash -n "$script"
+            echo "::endgroup::"
+          done
+      - name: Run deploy script tests
+        run: |
+          python3 scripts/test_deploy_web_bind_address.py
+          python3 scripts/test_audit_source_overlap.py
+
   payment-plugins:
     name: Payment plugin artifacts
     runs-on: ubuntu-latest

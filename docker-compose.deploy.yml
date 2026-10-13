@@ -96,7 +96,9 @@ services:
   web:
     image: ${CANVAS_WEB_IMAGE:?请先配置 CANVAS_WEB_IMAGE（必须包含镜像 digest）}
     ports:
-      - "${CANVAS_HTTP_PORT:-3000}:3000"
+      # CANVAS_WEB_HOST_IP 留空或 0.0.0.0 时保持监听全部接口（默认，与旧版一致）。
+      # 只想通过私有网络暴露服务时填具体地址，让端口不落到公网，例如 Tailscale 的 100.x。
+      - "${CANVAS_WEB_HOST_IP:-0.0.0.0}:${CANVAS_HTTP_PORT:-3000}:3000"
     volumes:
       # Keep hashed chunks from the current and previous web releases for old tabs.
       - ${CANVAS_WEB_DATA_PATH:-web-data}:/usr/share/nginx/html

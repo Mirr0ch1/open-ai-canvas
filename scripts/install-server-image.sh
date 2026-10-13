@@ -5,6 +5,7 @@ set -Eeuo pipefail
 REPOSITORY_REF="${REPOSITORY_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/open-ai-canvas}"
 CANVAS_HTTP_PORT="${CANVAS_HTTP_PORT:-3000}"
+CANVAS_WEB_HOST_IP="${CANVAS_WEB_HOST_IP:-}"
 REQUESTED_IMAGE_TAG="${CANVAS_IMAGE_TAG:-}"
 CANVAS_IMAGE_TAG="${REQUESTED_IMAGE_TAG#v}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-ghcr.io/ddcat-ai/open-ai-canvas}"
@@ -23,6 +24,24 @@ fail() {
     exit 1
 }
 
+
+# 校验 web 绑定地址：只接受 IP 字面量，不含端口或掩码；留空表示监听全部接口。
+# IPv6 必须写成 [::1] 形式——Compose 会把它和端口号拼进同一段，裸 IPv6 会被误解析，
+# 而带端口的 IPv4 又和 IPv6 语法混淆，因此这里统一要求方括号，不接受裸 IPv6。
+validate_web_host_ip() {
+    local value="$1" inner="$1"
+    [[ -z "$value" ]] && return 0
+    if [[ "$value" == \[*\] ]]; then
+        inner="${value:1:${#value}-2}"
+    fi
+    [[ "$inner" != *[[:space:]]* ]] || return 1
+    if [[ "$inner" == *:* ]]; then
+        [[ "$value" == \[*\] && "$inner" =~ ^[0-9A-Fa-f:.]+$ ]] || return 1
+        return 0
+    fi
+    [[ "$inner" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]
+}
+
 require_root() {
     if [[ "${EUID}" -ne 0 ]]; then
         fail "请使用 README 中带 sudo 的一键安装命令"
@@ -30,6 +49,8 @@ require_root() {
     [[ "$(uname -s)" == "Linux" ]] || fail "一键部署脚本仅支持 Linux 服务器"
     [[ "$CANVAS_HTTP_PORT" =~ ^[0-9]+$ ]] || fail "CANVAS_HTTP_PORT 必须是 1 到 65535 的数字"
     ((CANVAS_HTTP_PORT >= 1 && CANVAS_HTTP_PORT <= 65535)) || fail "CANVAS_HTTP_PORT 必须是 1 到 65535 的数字"
+    validate_web_host_ip "$CANVAS_WEB_HOST_IP" \
+        || fail "CANVAS_WEB_HOST_IP 必须是 IP 地址（IPv6 写成 [::1]），不要包含端口或掩码"
     if [[ -n "$CANVAS_IMAGE_TAG" ]]; then
         [[ "$CANVAS_IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || fail "CANVAS_IMAGE_TAG 不是有效的 Docker 镜像标签"
         [[ "$CANVAS_IMAGE_TAG" != "latest" ]] || fail "生产部署必须固定到具体 Release，不能使用 latest"
@@ -97,6 +118,13 @@ prepare_environment() {
             CANVAS_HTTP_PORT="$configured_http_port"
         fi
 
+        local configured_web_host_ip
+        configured_web_host_ip="$(sed -n 's/^CANVAS_WEB_HOST_IP=//p' .env | tail -n 1)"
+        if [[ -n "$configured_web_host_ip" ]]; then
+            validate_web_host_ip "$configured_web_host_ip" || fail ".env 中的 CANVAS_WEB_HOST_IP 无效（IPv6 写成 [::1]）"
+            CANVAS_WEB_HOST_IP="$configured_web_host_ip"
+        fi
+
         local configured_image_tag
         configured_image_tag="$(sed -n 's/^CANVAS_IMAGE_TAG=//p' .env | tail -n 1)"
         if [[ -n "$REQUESTED_IMAGE_TAG" ]]; then
@@ -142,6 +170,7 @@ POSTGRES_USER=open_ai_canvas
 POSTGRES_PASSWORD=${database_password}
 DATABASE_URL=postgresql://open_ai_canvas:${database_password}@postgres:5432/open_ai_canvas?sslmode=disable
 CANVAS_HTTP_PORT=${CANVAS_HTTP_PORT}
+CANVAS_WEB_HOST_IP=${CANVAS_WEB_HOST_IP}
 CANVAS_IMAGE_TAG=${CANVAS_IMAGE_TAG}
 CANVAS_BACKEND_IMAGE=${IMAGE_REPOSITORY}-backend:${CANVAS_IMAGE_TAG}
 CANVAS_WEB_IMAGE=${IMAGE_REPOSITORY}-web:${CANVAS_IMAGE_TAG}
@@ -207,11 +236,19 @@ start_services() {
 
 print_result() {
     local local_ip
-    local_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    [[ -n "$local_ip" ]] || local_ip="服务器IP"
+    # 绑定了具体地址时，访问入口就是该地址本身，不能再打印自动探测到的第一个 IP。
+    if [[ -n "$CANVAS_WEB_HOST_IP" ]]; then
+        local_ip="$CANVAS_WEB_HOST_IP"
+    else
+        local_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+        [[ -n "$local_ip" ]] || local_ip="服务器IP"
+    fi
 
     printf '\n部署完成。\n'
     printf '访问地址：http://%s:%s\n' "$local_ip" "$CANVAS_HTTP_PORT"
+    if [[ -n "$CANVAS_WEB_HOST_IP" ]]; then
+        printf '（web 已绑定到该地址，其他网络接口无法访问本端口）\n'
+    fi
     printf '安装目录：%s\n' "$INSTALL_DIR"
     printf '查看状态：cd %q && docker compose --env-file .env -f %s ps\n' "$INSTALL_DIR" "$COMPOSE_FILE"
     printf '\n首次打开后注册的第一个账号会自动成为管理员。公网长期使用前请配置 HTTPS。\n'

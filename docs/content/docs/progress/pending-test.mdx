@@ -5,6 +5,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 部署编排的 web 绑定地址（CANVAS_WEB_HOST_IP）
+
+- 已实现：生产编排 `docker-compose.deploy.yml` 的 web 端口支持 `CANVAS_WEB_HOST_IP`，默认 `0.0.0.0` 与改动前行为一致；两个一键部署脚本写入并校验该变量；`install-host-updater.sh` 按该变量推导 `CANVAS_UPDATER_HEALTH_URL`；README 与 `.env.example` 补充说明。
+- 动机：此前部署者只能手工改 `docker-compose.deploy.yml`，与 Host Updater 的 `git pull` 冲突，需 `git update-index --skip-worktree` 绕过，代价是收不到该文件的后续官方更新。绑定地址后无需改被 git 追踪的文件。
+- 已验证：`scripts/test_deploy_web_bind_address.py` 20 项全部通过（compose 插值 6 项、地址校验 5 项、健康检查推导 5 项、`.env.example` 2 项、shell 语法 1 项，另含两脚本一致性校验）。测试直接从 shell 脚本抽取真实函数执行，避免与实现漂移。已挂入 CI `deploy-scripts` job。该 job 尚未在真实 CI 上运行过。
+- 校验规则：接受 IPv4 字面量与方括号包裹的 IPv6（`[::1]`）；拒绝裸 IPv6、带端口、带掩码与非地址输入。裸 IPv6 会被 Compose 与端口号混解析，填错时报错比静默失败好。
+- 实现位置：`docker-compose.deploy.yml`、`scripts/install-server.sh`、`scripts/install-server-image.sh`、`scripts/install-host-updater.sh`、`.env.example`、`README.md`、`.github/workflows/quality.yml`。
+- [ ] 用户验收：真实服务器设置 `CANVAS_WEB_HOST_IP` 后 `docker compose up -d web`，用 `ss -tlnp` 确认监听地址为该 IP、其他接口连接被拒；再跑一次 `install-host-updater.sh`，确认 `/etc/open-ai-canvas-updater.env` 写入的 `CANVAS_UPDATER_HEALTH_URL` 指向绑定地址，且在线更新不再报「服务未就绪」。
+- [ ] 未验证：真实 Docker 环境下 `docker compose config` 的展开结果未实测（本机无 Docker），插值语义由测试按 Compose 规则模拟；IPv6 绑定未在真实环境验证。
+
 ## 灵感库中文提示词
 
 - 已实现：内置目录与首页画廊的提示词统一为中文；复用来源中文正文，补齐外文翻译；导入时校验原文摘要，缺译或旧译文阻止覆盖。

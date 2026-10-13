@@ -184,6 +184,18 @@ curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/script
 
 脚本会先按指定 Release 拉取镜像，再解析并写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE` 的 GHCR digest；生产 Compose 不接受缺失 digest 的默认镜像或 `latest`。更新流程、数据库迁移、备份和回退说明见[系统更新文档](docs/content/docs/backend/system-update.mdx)。
 
+### 限制端口暴露范围
+
+默认网页端口监听全部网络接口。服务只需经私有网络（如 Tailscale、WireGuard、内网网关）访问时，可在 `.env` 中指定绑定地址，让端口不落到公网：
+
+```bash
+# 只在该地址上提供服务，其他网络接口无法连接
+CANVAS_WEB_HOST_IP=100.74.221.72
+CANVAS_HTTP_PORT=3100
+```
+
+留空或设为 `0.0.0.0` 保持监听全部接口（默认）。IPv6 需写成 `[::1]` 形式。修改后重新 `docker compose up -d web` 生效；Host Updater 的健康检查地址会由安装脚本按同一变量推导，无需额外配置。
+
 ## 安全边界
 
 - 首次管理员注册应在受控网络完成，公网部署保持 `CANVAS_REGISTRATION_ENABLED=false`。
@@ -191,6 +203,7 @@ curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/script
 - 后端默认拒绝本机、私网和链路本地模型地址。开发时只通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行可信主机，不要使用全量放行开关。
 - 用户 API Key 不应出现在 URL、日志、错误上报或服务端长期明文存储中；只在可信部署和 HTTPS 链路中使用真实密钥。
 - 后端 `8080` 应留在 Compose 网络内，不要直接暴露到公网；限制 `.env`、数据库、上传目录、备份和 `.settings-key` 的权限。
+- 网页端口默认监听全部接口。仅需私有网络访问时用 `CANVAS_WEB_HOST_IP` 收口到指定地址，端口便不会暴露在公网；相比防火墙规则，绑定地址在迁移和重装系统时不会遗漏。
 - 媒体资源可使用后端数据目录、阿里云 OSS 或腾讯云 COS；删除素材前会检查业务引用。
 
 安全问题请按 [`SECURITY.md`](SECURITY.md) 报告，不要在公开 Issue 中粘贴密钥、Cookie、数据库或生产日志。

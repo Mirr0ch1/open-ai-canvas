@@ -80,6 +80,36 @@ ensure_token() {
     printf 'CANVAS_UPDATER_TOKEN=%s\nCANVAS_UPDATER_INSTALL_DIR=%s\nCANVAS_UPDATER_SOCKET=%s/updater.sock\n' "$token" "$INSTALL_DIR" "$SOCKET_DIR" > "$UPDATER_ENV"
 }
 
+# updater 二进制的默认健康检查地址是回环 http://127.0.0.1:<port>/api/health/ready。
+# 一旦 CANVAS_WEB_HOST_IP 绑到非回环地址（典型是 Tailscale 的 100.x），回环上就没有
+# 监听，在线更新会以「当前运行版本与部署配置不一致或服务未就绪」失败。二进制不在本仓库内，
+# 无法改其默认值，这里按部署编排实际配置推导出正确的健康检查地址。
+ensure_health_url() {
+    local host_ip http_port health_url current
+    host_ip="$(sed -n 's/^CANVAS_WEB_HOST_IP=//p' "${INSTALL_DIR}/.env" | tail -n 1)"
+    http_port="$(sed -n 's/^CANVAS_HTTP_PORT=//p' "${INSTALL_DIR}/.env" | tail -n 1)"
+    http_port="${http_port:-3000}"
+
+    if [[ -z "$host_ip" || "$host_ip" == "0.0.0.0" ]]; then
+        # 监听全部接口时回环必然可达，用回环可以避免把健康检查流量打到外部网卡。
+        health_url="http://127.0.0.1:${http_port}/api/health/ready"
+    else
+        health_url="http://${host_ip}:${http_port}/api/health/ready"
+    fi
+
+    current="$(sed -n 's/^CANVAS_UPDATER_HEALTH_URL=//p' "$UPDATER_ENV" | tail -n 1)"
+    [[ "$current" == "$health_url" ]] && return
+
+    umask 077
+    # 手工配置过（与推导值不同）时保留用户的设置，不覆盖。
+    if [[ -n "$current" ]]; then
+        printf '保留手工配置的 CANVAS_UPDATER_HEALTH_URL：%s\n' "$current"
+        return
+    fi
+    printf 'CANVAS_UPDATER_HEALTH_URL=%s\n' "$health_url" >> "$UPDATER_ENV"
+    printf '健康检查地址：%s\n' "$health_url"
+}
+
 install_service() {
     local temporary_service
     install -d -m 0755 "$SOCKET_DIR"
@@ -118,6 +148,7 @@ main() {
     read_image_tag
     install_binary
     ensure_token
+    ensure_health_url
     install_service
     printf 'Host Updater 已安装，Socket：%s/updater.sock\n' "$SOCKET_DIR"
     printf '请重建 backend 容器，使 Token 与 Socket 挂载生效。\n'
